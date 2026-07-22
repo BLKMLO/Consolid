@@ -1,0 +1,14 @@
+{
+  "bundle": {
+    "appImage": {
+      "productName": "Consolid Audit",
+      "identifier": "com.blkmlo.consolid_audit",
+      "icon": [
+        {
+          "file": "icons/icon.png",
+          "sizes": [32, 128, 256, 512]
+        }
+      ]
+    }
+  }
+}

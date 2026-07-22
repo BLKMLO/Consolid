@@ -1,0 +1,54 @@
+[package]
+name = "consolid-audit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Tauri
+tauri = { version = "2.0", features = ["shell-open"] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-dialog = "2.0"
+tauri-plugin-fs = "2.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# File handling
+csv = "1.3"
+excel = "0.1.0"
+calamine = "0.22"
+
+# Async
+tokio = { version = "1.0", features = ["full"] }
+
+# HTTP client for Mistral API
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Regex for anonymization
+regex = "1.10"
+
+# UUID for session management
+uuid = { version = "1.4", features = ["v4"] }
+
+# For file paths
+pathdiff = "0.2"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[profile.release]
+opt-level = "s"
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
