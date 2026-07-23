@@ -55,10 +55,9 @@ workflow. Le build Windows release n'ouvre pas de console secondaire.
 
 ## Versions
 
-Chaque tag `v*` déclenche le workflow Release : l'exécutable Windows est recompilé
-après exécution des tests, puis publié en tant que GitHub Release avec son
-empreinte SHA-256 et des notes générées automatiquement. Les dépendances Cargo et
-les actions GitHub sont suivies par Dependabot, avec une revue hebdomadaire.
+Les dépendances Cargo et les actions GitHub sont suivies par Dependabot, avec une
+revue hebdomadaire. La publication de l'exécutable Windows en GitHub Release sur
+tag `v*` (build testé, empreinte SHA-256 jointe) reste à activer.
 
 ## Utilisation
 
