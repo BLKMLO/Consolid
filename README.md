@@ -1,117 +1,97 @@
-# Consolid Audit
+# Consolid
 
-> Outil d'audit et de consolidation comptable avec anonymisation locale et analyse IA via Mistral
+Application Windows native, écrite uniquement en Rust, destinée à vérifier une
+consolidation existante à partir de plusieurs pièces sources.
 
-## 🚀 Fonctionnalités
+## Fonctionnement
 
-- **Interface graphique moderne** avec glisser-déposer
-- **Anonymisation locale** des données sensibles (emails, téléphones, SIREN/SIRET, noms, adresses, etc.)
-- **Validation des fichiers** avant envoi
-- **Intégration avec Mistral API** pour l'analyse IA
-- **Support multi-formats** : CSV, Excel (XLSX, XLS, ODS), TXT
-- **Gestion des erreurs** complète avec feedback visuel
-- **Indicateur de statut** pour vérifier que tout est prêt avant envoi
+1. L'utilisateur sélectionne les pièces sources.
+2. Il sélectionne séparément la consolidation déjà réalisée.
+3. L'application extrait les contenus en local.
+4. Les identifiants structurés et les personnes, sociétés ou adresses explicitement
+   libellées sont pseudonymisés avec une table commune au lot.
+5. Seuls les contenus pseudonymisés et des identifiants neutres (`SOURCE_001`, etc.)
+   sont envoyés à l'API Mistral.
+6. La réponse est désanonymisée en mémoire puis écrite atomiquement dans le fichier
+   choisi par l'utilisateur.
 
-## 📦 Prérequis
+Une même valeur, y compris si elle apparaît dans plusieurs fichiers, reçoit le même
+jeton pendant toute l'opération.
 
-- Node.js 18+ (pour le frontend)
-- Rust 1.70+ (pour le backend)
-- Tauri CLI (`npm install -g @tauri-apps/cli`)
-- Une clé API Mistral (optionnelle pour tester l'interface)
+## Formats
 
-## 🛠 Installation
+| Format | Lecture |
+|---|---|
+| CSV | Oui |
+| XLSX, XLS, XLSB, ODS | Oui |
+| DOCX | Oui |
+| JSON, TXT, MD | Oui, UTF-8 |
+| PDF | Non, refus explicite |
 
-```bash
-# Cloner le dépôt
-git clone https://github.com/BLKMLO/Consolid.git
-cd Consolid
+Le résultat est du texte ou du Markdown. L'application ne prétend pas reconstruire
+à l'identique un conteneur Office binaire à partir de la réponse d'un LLM.
 
-# Installer les dépendances npm
-npm install
+## Compilation
 
-# Installer les dépendances Rust (si nécessaire)
-cargo build
-```
-
-## ⚡ Utilisation
-
-### Développement
+Prérequis : Rust stable 1.92 ou ultérieur.
 
 ```bash
-# Lancer l'application en mode développement
-npm run tauri dev
+cargo build --release --locked
 ```
 
-### Production
+Sous Windows, l'exécutable est généré dans :
+
+```text
+target\release\consolid-audit.exe
+```
+
+La CI GitHub compile et teste le projet sur `windows-latest`, puis publie
+`consolid-audit.exe` comme artefact du workflow.
+
+## Utilisation
 
 ```bash
-# Construire l'application
-npm run tauri build
-
-# L'exécutable sera généré dans le dossier target/release
+cargo run --release
 ```
 
-### Configuration
+Dans l'interface :
 
-1. **Clé API Mistral** : Configurez votre clé API dans les paramètres de l'application
-2. **Modèle** : Choisissez le modèle Mistral à utiliser (tiny, small, medium, large)
-3. **Paramètres d'anonymisation** : Activez/désactivez les types de données à anonymiser
+- ajoutez les pièces justificatives ;
+- choisissez la consolidation existante à contrôler ;
+- saisissez la clé API Mistral et, si nécessaire, le modèle ;
+- choisissez un fichier de sortie `.md` ou `.txt` ;
+- lancez la vérification.
 
-## 📁 Structure du projet
+Le modèle par défaut est `mistral-small-latest`. L'URL de l'API est fixe afin
+d'éviter qu'une donnée sensible soit envoyée vers un serveur arbitraire.
 
+## Sécurité et limites
+
+- la clé API et la table de correspondance ne sont ni enregistrées ni journalisées ;
+- aucun chemin ni nom de fichier local n'est inclus dans la requête ;
+- HTTPS avec validation des certificats est obligatoire ;
+- les entrées sont limitées à 50 Mio par fichier, le texte extrait à 20 Mio et la
+  requête totale à 30 Mio ;
+- l'écriture utilise un fichier temporaire dans le dossier cible avec restauration
+  de l'ancien résultat en cas d'échec ;
+- la détection des personnes et sociétés repose volontairement sur des libellés
+  explicites : une revue humaine reste obligatoire avant tout traitement de données
+  réelles ;
+- la pseudonymisation réduit l'exposition mais ne constitue pas une anonymisation
+  irréversible au sens juridique.
+
+Consultez [SECURITY.md](SECURITY.md) avant un usage en production.
+
+## Validation
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+cargo build --release --locked
+cargo audit
 ```
-Consolid/
-├── src/                    # Frontend (Svelte)
-│   ├── components/        # Composants UI
-│   ├── stores/            # Gestion d'état
-│   └── App.svelte         # Composant principal
-├── src-tauri/             # Backend (Rust)
-│   ├── src/
-│   │   ├── anonymizer/    # Module d'anonymisation
-│   │   ├── validator/     # Module de validation
-│   │   ├── api/           # Client Mistral API
-│   │   └── file_handler/  # Gestion des fichiers
-│   └── tauri.conf.json   # Configuration Tauri
-├── package.json           # Dépendances npm
-└── Cargo.toml             # Dépendances Rust
-```
 
-## 🔒 Sécurité
+## Licence
 
-- **Anonymisation locale** : Toutes les données sensibles sont anonymisées sur votre machine avant envoi
-- **Pas de stockage cloud** : Vos fichiers ne quittent jamais votre ordinateur
-- **Chiffrement** : La communication avec Mistral API se fait via HTTPS
-- **Clé API sécurisée** : La clé API est stockée localement et n'est jamais partagée
-
-## 🎯 Cas d'usage
-
-1. **Audit comptable** : Vérifiez la cohérence de vos données comptables
-2. **Consolidation** : Consolidez plusieurs fichiers comptables
-3. **Analyse IA** : Obtenez des insights et des recommandations basées sur l'IA
-4. **Conformité** : Vérifiez que vos données respectent les normes comptables
-
-## 📊 Formats supportés
-
-- **CSV** : Fichiers CSV standard
-- **Excel** : XLSX, XLS, ODS
-- **Texte** : TXT, JSON
-- **PDF** : (Lecture seule pour l'instant)
-
-## 🤝 Contribution
-
-Les contributions sont les bienvenues ! Veuillez ouvrir une issue ou une pull request.
-
-## 📄 Licence
-
-Ce projet est sous licence MIT. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
-
-## 🙏 Remerciements
-
-- [Tauri](https://tauri.app/) - Framework pour applications desktop
-- [Svelte](https://svelte.dev/) - Framework frontend
-- [Mistral AI](https://mistral.ai/) - Modèles d'IA
-- [Rust](https://www.rust-lang.org/) - Langage de programmation
-
----
-
-Développé avec ❤️ par [BLKMLO](https://github.com/BLKMLO)
+MIT, voir [LICENSE](LICENSE).
