@@ -117,7 +117,7 @@ fn detect_csv_delimiter(path: &Path) -> Result<u8, ExtractError> {
         .unwrap_or_default();
 
     let mut best = (0_usize, b',');
-    for candidate in [b';', b',', b'\t'] {
+    for candidate in *b";,\t" {
         let mut count = 0;
         let mut quoted = false;
         for byte in line {
