@@ -1,5 +1,9 @@
 name: Rust CI
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: ["main"]
@@ -40,12 +44,22 @@ jobs:
       - name: Release build
         run: cargo build --release --locked
 
+      - name: Generate SHA-256 checksum
+        shell: pwsh
+        run: |
+          $path = "target/release/consolid-audit.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $path).Hash.ToLowerInvariant()
+          "$hash  consolid-audit.exe" | Set-Content -Encoding ascii "$path.sha256"
+
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
           name: consolid-windows-x64
-          path: target/release/consolid-audit.exe
+          path: |
+            target/release/consolid-audit.exe
+            target/release/consolid-audit.exe.sha256
           if-no-files-found: error
+          retention-days: 14
 
   audit:
     runs-on: ubuntu-latest
