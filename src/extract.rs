@@ -107,7 +107,9 @@ mod tests {
 
     #[test]
     fn rejects_non_excel_formats() {
-        for suffix in [".pdf", ".csv", ".json", ".txt", ".md", ".docx", ".ods", ".bin"] {
+        for suffix in [
+            ".pdf", ".csv", ".json", ".txt", ".md", ".docx", ".ods", ".bin",
+        ] {
             let file = tempfile::Builder::new().suffix(suffix).tempfile().unwrap();
             assert!(
                 matches!(extract(file.path()), Err(ExtractError::Unsupported(_))),
