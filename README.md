@@ -53,6 +53,12 @@ La CI GitHub compile et teste le projet sur `windows-latest`, puis publie
 `consolid-audit.exe` et son fichier `consolid-audit.exe.sha256` comme artefacts du
 workflow. Le build Windows release n'ouvre pas de console secondaire.
 
+## Versions
+
+Les dépendances Cargo et les actions GitHub sont suivies par Dependabot, avec une
+revue hebdomadaire. La publication de l'exécutable Windows en GitHub Release sur
+tag `v*` (build testé, empreinte SHA-256 jointe) reste à activer.
+
 ## Utilisation
 
 ```bash

@@ -85,6 +85,16 @@ pub fn audit(
     prompt: &str,
     cancelled: &AtomicBool,
 ) -> Result<String, MistralError> {
+    audit_with_endpoint(ENDPOINT, api_key, model, prompt, cancelled)
+}
+
+fn audit_with_endpoint(
+    endpoint: &str,
+    api_key: &str,
+    model: &str,
+    prompt: &str,
+    cancelled: &AtomicBool,
+) -> Result<String, MistralError> {
     validate_parameters(api_key, model)?;
 
     let client = Client::builder()
@@ -117,7 +127,7 @@ pub fn audit(
             return Err(MistralError::Cancelled);
         }
         let response = client
-            .post(ENDPOINT)
+            .post(endpoint)
             .header(AUTHORIZATION, authorization.clone())
             .header(CONTENT_TYPE, "application/json")
             .json(&request)
@@ -274,6 +284,7 @@ fn sanitize_message(value: &str, maximum: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read as _, Write as _};
 
     #[test]
     fn model_validation_blocks_injected_values() {
@@ -308,5 +319,135 @@ mod tests {
             serde_json::from_str(r#"[{"type":"text","text":"un"},{"type":"text","text":" deux"}]"#)
                 .unwrap();
         assert!(matches!(chunks, ResponseContent::Chunks(values) if values.len() == 2));
+    }
+
+    /// Serveur HTTP minimaliste sur 127.0.0.1 : lit une requête complète, renvoie
+    /// la réponse fournie, puis rend la requête capturée au test pour inspection.
+    fn spawn_mock_server(
+        status: u16,
+        body: &'static str,
+    ) -> (String, std::thread::JoinHandle<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+        let url = format!("http://{}", listener.local_addr().expect("adresse locale"));
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut received = Vec::new();
+            let mut buffer = [0_u8; 8192];
+            let mut header_end = None;
+            while header_end.is_none() {
+                let read = stream.read(&mut buffer).expect("lecture en-têtes");
+                assert!(read > 0, "connexion fermée avant la fin des en-têtes");
+                received.extend_from_slice(&buffer[..read]);
+                header_end = received
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|position| position + 4);
+            }
+            let header_end = header_end.expect("fin d'en-têtes détectée");
+            let head = String::from_utf8_lossy(&received[..header_end]).into_owned();
+            let content_length: usize = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.trim().eq_ignore_ascii_case("content-length") {
+                        value.trim().parse().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+            while received.len() < header_end + content_length {
+                let read = stream.read(&mut buffer).expect("lecture corps");
+                if read == 0 {
+                    break;
+                }
+                received.extend_from_slice(&buffer[..read]);
+            }
+            let reason = if status == 200 { "OK" } else { "Error" };
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("écriture réponse");
+            String::from_utf8_lossy(&received).into_owned()
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn audit_sends_authorized_request_and_parses_response() {
+        let body = r#"{"choices":[{"message":{"content":"résultat corrigé"},"finish_reason":"stop"}]}"#;
+        let (url, server) = spawn_mock_server(200, body);
+        let cancelled = AtomicBool::new(false);
+        let result = audit_with_endpoint(
+            &url,
+            "test-key-123456",
+            "mistral-small-latest",
+            "prompt de test",
+            &cancelled,
+        );
+        assert_eq!(result.expect("réponse mock valide"), "résultat corrigé");
+
+        let request = server.join().expect("thread serveur").to_lowercase();
+        assert!(
+            request.contains("authorization: bearer test-key-123456"),
+            "en-tête d'authentification absent : {request}"
+        );
+        assert!(
+            request.contains("\"model\":\"mistral-small-latest\""),
+            "modèle absent du corps : {request}"
+        );
+        assert!(
+            request.contains("prompt de test"),
+            "prompt absent du corps : {request}"
+        );
+    }
+
+    #[test]
+    fn audit_maps_401_to_authentication_error() {
+        let (url, server) = spawn_mock_server(401, r#"{"error":"unauthorized"}"#);
+        let cancelled = AtomicBool::new(false);
+        let result = audit_with_endpoint(
+            &url,
+            "test-key-123456",
+            "mistral-small-latest",
+            "prompt de test",
+            &cancelled,
+        );
+        assert!(matches!(result, Err(MistralError::Authentication)));
+        let _ = server.join();
+    }
+
+    #[test]
+    fn audit_maps_403_to_authentication_error() {
+        let (url, server) = spawn_mock_server(403, r#"{"error":"forbidden"}"#);
+        let cancelled = AtomicBool::new(false);
+        let result = audit_with_endpoint(
+            &url,
+            "test-key-123456",
+            "mistral-small-latest",
+            "prompt de test",
+            &cancelled,
+        );
+        assert!(matches!(result, Err(MistralError::Authentication)));
+        let _ = server.join();
+    }
+
+    #[test]
+    fn audit_rejects_incomplete_generation() {
+        let body = r#"{"choices":[{"message":{"content":"tronqué"},"finish_reason":"length"}]}"#;
+        let (url, server) = spawn_mock_server(200, body);
+        let cancelled = AtomicBool::new(false);
+        let result = audit_with_endpoint(
+            &url,
+            "test-key-123456",
+            "mistral-small-latest",
+            "prompt de test",
+            &cancelled,
+        );
+        assert!(matches!(result, Err(MistralError::InvalidResponse(_))));
+        let _ = server.join();
     }
 }
