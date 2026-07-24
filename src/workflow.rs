@@ -71,7 +71,7 @@ pub enum WorkflowError {
     TargetInSources,
     #[error("le fichier de sortie ne peut pas remplacer une entrée ou la consolidation")]
     OutputConflictsWithInput,
-    #[error("sortie invalide : choisissez un fichier .md ou .txt dans un dossier existant")]
+    #[error("sortie invalide : choisissez un fichier .xlsx dans un dossier existant")]
     InvalidOutput,
     #[error("opération annulée ; aucun résultat n’a été écrit")]
     Cancelled,
@@ -85,6 +85,8 @@ pub enum WorkflowError {
     PromptTooLarge,
     #[error("préparation de la requête impossible : {0}")]
     PromptBuild(String),
+    #[error("génération du classeur Excel impossible : {0}")]
+    XlsxBuild(String),
     #[error("écriture du résultat impossible : {0}")]
     Write(#[from] io::Error),
 }
@@ -218,7 +220,8 @@ pub fn run_with_progress(
     ensure_not_cancelled(cancellation)?;
 
     progress(RunStage::Writing);
-    atomic_write(&config.output, restored.as_bytes())?;
+    let workbook = build_xlsx(&restored)?;
+    atomic_write(&config.output, &workbook)?;
     Ok(RunResult {
         output: config.output.clone(),
         replacements: pseudonymizer.replacement_count(),
@@ -257,7 +260,7 @@ fn validate(config: &RunConfig) -> Result<(), WorkflowError> {
         .output
         .extension()
         .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("md") || value.eq_ignore_ascii_case("txt"));
+        .is_some_and(|value| value.eq_ignore_ascii_case("xlsx"));
     if !valid_extension
         || config.output.file_name().is_none()
         || config.output.parent().is_none_or(|parent| !parent.is_dir())
@@ -266,6 +269,242 @@ fn validate(config: &RunConfig) -> Result<(), WorkflowError> {
         return Err(WorkflowError::InvalidOutput);
     }
     Ok(())
+}
+
+struct ParsedRow {
+    cells: Vec<(String, String)>,
+}
+
+struct ParsedSheet {
+    name: String,
+    rows: Vec<ParsedRow>,
+}
+
+/// Reconstruit un classeur Excel à partir du texte structuré restitué par
+/// l'analyse (marqueurs `SHEET_n` / `ROW_n` et paires `clé: valeur`). Si le
+/// texte ne suit pas cette structure, il est versé tel quel, une ligne par
+/// ligne, dans une feuille unique.
+fn build_xlsx(text: &str) -> Result<Vec<u8>, WorkflowError> {
+    let mut sheets: Vec<ParsedSheet> = vec![ParsedSheet {
+        name: "Consolidation".into(),
+        rows: Vec::new(),
+    }];
+    let mut current_row: Option<ParsedRow> = None;
+    let mut structured = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.starts_with("SHEET_") {
+            if let Some(row) = current_row.take() {
+                sheets.last_mut().expect("feuille courante").rows.push(row);
+            }
+            sheets.push(ParsedSheet {
+                name: format!("Feuille {}", sheets.len()),
+                rows: Vec::new(),
+            });
+            structured = true;
+        } else if trimmed.starts_with("ROW_") {
+            if let Some(row) = current_row.take() {
+                sheets.last_mut().expect("feuille courante").rows.push(row);
+            }
+            current_row = Some(ParsedRow { cells: Vec::new() });
+            structured = true;
+        } else if trimmed.is_empty() {
+            continue;
+        } else if let Some((key, value)) = trimmed.split_once(": ") {
+            if structured || current_row.is_some() {
+                current_row
+                    .get_or_insert(ParsedRow { cells: Vec::new() })
+                    .cells
+                    .push((key.trim().to_owned(), value.to_owned()));
+            } else {
+                sheets
+                    .last_mut()
+                    .expect("feuille courante")
+                    .rows
+                    .push(ParsedRow {
+                        cells: vec![(String::new(), trimmed.to_owned())],
+                    });
+            }
+        } else {
+            sheets
+                .last_mut()
+                .expect("feuille courante")
+                .rows
+                .push(ParsedRow {
+                    cells: vec![(String::new(), trimmed.to_owned())],
+                });
+        }
+    }
+    if let Some(row) = current_row.take() {
+        sheets.last_mut().expect("feuille courante").rows.push(row);
+    }
+    sheets.retain(|sheet| !sheet.rows.is_empty());
+    if sheets.is_empty() {
+        sheets.push(ParsedSheet {
+            name: "Consolidation".into(),
+            rows: Vec::new(),
+        });
+    }
+
+    // Écriture du classeur : un xlsx est une archive ZIP de documents XML.
+    // Les cellules utilisent des chaînes en ligne (`inlineStr`), ce qui évite
+    // le recours à une table de chaînes partagées.
+    let sheet_xml: Vec<String> = sheets.iter().map(worksheet_xml).collect();
+
+    let mut content_types = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
+         <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+         <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+         <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+         <Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
+    );
+    let mut workbook_sheets = String::new();
+    let mut workbook_rels = String::new();
+    for (index, sheet) in sheets.iter().enumerate() {
+        let sheet_number = index + 1;
+        content_types.push_str(&format!(
+            "<Override PartName=\"/xl/worksheets/sheet{sheet_number}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+        ));
+        let truncated: String = sheet.name.chars().take(31).collect();
+        let name = if truncated.is_empty() {
+            format!("Feuille {sheet_number}")
+        } else {
+            truncated
+        };
+        workbook_sheets.push_str(&format!(
+            "<sheet name=\"{}\" sheetId=\"{sheet_number}\" r:id=\"rId{sheet_number}\"/>",
+            xml_escape(&name)
+        ));
+        workbook_rels.push_str(&format!(
+            "<Relationship Id=\"rId{sheet_number}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{sheet_number}.xml\"/>"
+        ));
+    }
+    content_types.push_str("</Types>");
+
+    let workbook_xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
+         <workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" \
+         xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+         <sheets>{workbook_sheets}</sheets></workbook>"
+    );
+    let root_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>\
+        </Relationships>";
+    let workbook_rels = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
+         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{workbook_rels}</Relationships>"
+    );
+
+    let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let entries: [(&str, &str); 3] = [
+        ("[Content_Types].xml", &content_types),
+        ("_rels/.rels", root_rels),
+        ("xl/workbook.xml", &workbook_xml),
+    ];
+    for (name, content) in entries {
+        archive
+            .start_file(name, options)
+            .map_err(|error| WorkflowError::XlsxBuild(error.to_string()))?;
+        archive
+            .write_all(content.as_bytes())
+            .map_err(|error| WorkflowError::XlsxBuild(error.to_string()))?;
+    }
+    archive
+        .start_file("xl/_rels/workbook.xml.rels", options)
+        .map_err(|error| WorkflowError::XlsxBuild(error.to_string()))?;
+    archive
+        .write_all(workbook_rels.as_bytes())
+        .map_err(|error| WorkflowError::XlsxBuild(error.to_string()))?;
+    for (index, xml) in sheet_xml.iter().enumerate() {
+        archive
+            .start_file(format!("xl/worksheets/sheet{}.xml", index + 1), options)
+            .map_err(|error| WorkflowError::XlsxBuild(error.to_string()))?;
+        archive
+            .write_all(xml.as_bytes())
+            .map_err(|error| WorkflowError::XlsxBuild(error.to_string()))?;
+    }
+    let cursor = archive
+        .finish()
+        .map_err(|error| WorkflowError::XlsxBuild(error.to_string()))?;
+    Ok(cursor.into_inner())
+}
+
+/// Sérialise une feuille analysée en XML de feuille de calcul. La première
+/// ligne porte les en-têtes de colonnes lorsque des clés sont présentes.
+fn worksheet_xml(sheet: &ParsedSheet) -> String {
+    let mut headers: Vec<&str> = Vec::new();
+    for row in &sheet.rows {
+        for (key, _) in &row.cells {
+            if !key.is_empty() && !headers.contains(&key.as_str()) {
+                headers.push(key.as_str());
+            }
+        }
+    }
+
+    let mut xml = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
+         <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>",
+    );
+    let mut row_number = 1_u32;
+    if !headers.is_empty() {
+        xml.push_str(&format!("<row r=\"{row_number}\">"));
+        for (column, header) in headers.iter().enumerate() {
+            push_inline_cell(&mut xml, row_number, column as u32, header);
+        }
+        xml.push_str("</row>");
+        row_number += 1;
+    }
+    for row in &sheet.rows {
+        xml.push_str(&format!("<row r=\"{row_number}\">"));
+        if headers.is_empty() {
+            push_inline_cell(&mut xml, row_number, 0, &row.cells[0].1);
+        } else {
+            for (key, value) in &row.cells {
+                if let Some(column) = headers.iter().position(|header| *header == key) {
+                    push_inline_cell(&mut xml, row_number, column as u32, value);
+                }
+            }
+        }
+        xml.push_str("</row>");
+        row_number += 1;
+    }
+    xml.push_str("</sheetData></worksheet>");
+    xml
+}
+
+fn push_inline_cell(xml: &mut String, row: u32, column: u32, value: &str) {
+    xml.push_str(&format!(
+        "<c r=\"{}{}\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{}</t></is></c>",
+        column_letter(column),
+        row,
+        xml_escape(value)
+    ));
+}
+
+fn column_letter(column: u32) -> String {
+    let mut letters = Vec::new();
+    let mut column = column;
+    loop {
+        letters.push((b'A' + (column % 26) as u8) as char);
+        if column < 26 {
+            break;
+        }
+        column = column / 26 - 1;
+    }
+    letters.iter().rev().collect()
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn normalized_path(path: &Path) -> PathBuf {
@@ -371,7 +610,7 @@ mod tests {
         RunConfig {
             sources: vec![source],
             consolidation,
-            output: directory.join("resultat.md"),
+            output: directory.join("resultat.xlsx"),
             api_key: "test-key-not-used".into(),
             model: "mistral-small-latest".into(),
         }
@@ -439,9 +678,22 @@ mod tests {
     }
 
     #[test]
+    fn build_xlsx_produces_a_valid_workbook() {
+        let buffer = build_xlsx("SHEET_1\nROW_1\nClient: Acme\nMontant: 42\n").unwrap();
+        assert_eq!(&buffer[..2], b"PK");
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn build_xlsx_handles_unstructured_text() {
+        let buffer = build_xlsx("ligne une\nligne deux\n").unwrap();
+        assert_eq!(&buffer[..2], b"PK");
+    }
+
+    #[test]
     fn atomic_write_replaces_and_cleans_temporary_files() {
         let directory = tempfile::tempdir().unwrap();
-        let output = directory.path().join("resultat.md");
+        let output = directory.path().join("resultat.xlsx");
         std::fs::write(&output, "ancien").unwrap();
         atomic_write(&output, b"nouveau").unwrap();
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "nouveau");
