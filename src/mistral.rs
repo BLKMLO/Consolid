@@ -378,7 +378,8 @@ mod tests {
 
     #[test]
     fn audit_sends_authorized_request_and_parses_response() {
-        let body = r#"{"choices":[{"message":{"content":"résultat corrigé"},"finish_reason":"stop"}]}"#;
+        let body =
+            r#"{"choices":[{"message":{"content":"résultat corrigé"},"finish_reason":"stop"}]}"#;
         let (url, server) = spawn_mock_server(200, body);
         let cancelled = AtomicBool::new(false);
         let result = audit_with_endpoint(
