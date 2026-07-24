@@ -23,17 +23,14 @@ jeton pendant toute l'opération. Un texte ressemblant déjà à un jeton intern
 
 ## Formats
 
-| Format | Lecture |
-|---|---|
-| CSV | Oui, séparateur `,`, `;` ou tabulation détecté automatiquement |
-| XLSX, XLS, XLSB, ODS | Oui |
-| DOCX | Oui |
-| JSON | Oui, UTF-8, structure aplatie en chemins de champs |
-| TXT, MD | Oui, UTF-8 |
-| PDF | Non, refus explicite |
+| Format | Lecture | Écriture |
+|---|---|---|
+| XLSX, XLS, XLSB | Oui | XLSX uniquement |
 
-Le résultat est du texte ou du Markdown. L'application ne prétend pas reconstruire
-à l'identique un conteneur Office binaire à partir de la réponse d'un LLM.
+Seuls les classeurs Excel sont acceptés en entrée. Le résultat est reconstruit
+en classeur `.xlsx` : chaque feuille source redevient une feuille et chaque
+ligne de données une ligne du tableau, à partir de la réponse contrôlée du
+modèle. La fenêtre de l'application a une taille fixe.
 
 ## Compilation
 
@@ -70,7 +67,7 @@ Dans l'interface :
 - ajoutez ou glissez-déposez les pièces justificatives ;
 - choisissez la consolidation existante à contrôler ;
 - saisissez la clé API Mistral et, si nécessaire, le modèle ;
-- choisissez un fichier de sortie `.md` ou `.txt` ;
+- choisissez un fichier de sortie `.xlsx` ;
 - lancez la vérification.
 
 Les doublons, les conflits de chemins et les fichiers supérieurs à 50 Mio sont
