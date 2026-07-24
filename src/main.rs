@@ -10,9 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use zeroize::Zeroize;
 
-const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "csv", "xlsx", "xls", "xlsb", "ods", "docx", "json", "txt", "md",
-];
+const SUPPORTED_EXTENSIONS: &[&str] = &["xlsx", "xls", "xlsb"];
 const MAX_SOURCE_FILES: usize = 100;
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(46, 144, 250);
 const SUCCESS: egui::Color32 = egui::Color32::from_rgb(53, 190, 128);
@@ -56,7 +54,7 @@ impl Default for ConsolidApp {
             api_key: String::new(),
             model: "mistral-small-latest".into(),
             show_api_key: false,
-            status: "Ajoutez les pièces sources, puis la consolidation à contrôler.".into(),
+            status: "Ajoutez les classeurs Excel sources, puis la consolidation à contrôler.".into(),
             status_kind: StatusKind::Info,
             running: false,
             receiver: None,
@@ -77,7 +75,7 @@ impl Drop for ConsolidApp {
 impl ConsolidApp {
     fn select_sources(&mut self) {
         if let Some(paths) = rfd::FileDialog::new()
-            .add_filter("Documents pris en charge", SUPPORTED_EXTENSIONS)
+            .add_filter("Classeurs Excel", SUPPORTED_EXTENSIONS)
             .pick_files()
         {
             self.add_sources(paths);
@@ -122,14 +120,14 @@ impl ConsolidApp {
 
     fn select_consolidation(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Documents pris en charge", SUPPORTED_EXTENSIONS)
+            .add_filter("Classeurs Excel", SUPPORTED_EXTENSIONS)
             .pick_file()
         else {
             return;
         };
         if !is_supported_file(&path) {
             self.set_status(
-                "Consolidation refusée : format non pris en charge ou fichier supérieur à 50 Mio.",
+                "Consolidation refusée : seuls les classeurs Excel (.xlsx, .xls, .xlsb) de moins de 50 Mio sont acceptés.",
                 StatusKind::Error,
             );
         } else if self.sources.iter().any(|source| same_path(source, &path)) {
@@ -145,19 +143,18 @@ impl ConsolidApp {
 
     fn select_output(&mut self) {
         let Some(mut path) = rfd::FileDialog::new()
-            .add_filter("Markdown", &["md"])
-            .add_filter("Texte", &["txt"])
-            .set_file_name("consolidation_verifiee.md")
+            .add_filter("Classeur Excel", &["xlsx"])
+            .set_file_name("consolidation_verifiee.xlsx")
             .save_file()
         else {
             return;
         };
         if path.extension().is_none() {
-            path.set_extension("md");
+            path.set_extension("xlsx");
         }
         if !has_output_extension(&path) {
             self.set_status(
-                "Sortie refusée : utilisez l’extension .md ou .txt.",
+                "Sortie refusée : utilisez l’extension .xlsx.",
                 StatusKind::Error,
             );
         } else if self.sources.iter().any(|source| same_path(source, &path))
@@ -398,7 +395,7 @@ impl ConsolidApp {
 
     fn render_sources(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
-            section_title(ui, "1", "Pièces sources", "Documents servant de référence");
+            section_title(ui, "1", "Pièces sources", "Classeurs Excel servant de référence");
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(!self.running, egui::Button::new("＋ Ajouter des fichiers"))
@@ -485,7 +482,7 @@ impl ConsolidApp {
                 ui,
                 "2",
                 "Consolidation existante",
-                "Document à contrôler et corriger",
+                "Classeur Excel à contrôler et corriger",
             );
             ui.horizontal(|ui| {
                 if ui
@@ -565,7 +562,7 @@ impl ConsolidApp {
                 ui,
                 "4",
                 "Résultat",
-                "Fichier texte écrit atomiquement après contrôle des jetons",
+                "Classeur Excel écrit atomiquement après contrôle des jetons",
             );
             ui.horizontal(|ui| {
                 if ui
@@ -576,7 +573,7 @@ impl ConsolidApp {
                 }
                 path_label(ui, self.output.as_deref());
             });
-            ui.small("Formats de sortie : Markdown (.md) ou texte UTF-8 (.txt).");
+            ui.small("Format de sortie : classeur Excel (.xlsx).");
         });
     }
 
@@ -659,7 +656,7 @@ impl eframe::App for ConsolidApp {
                             ui.add_space(8.0);
                             ui.label(
                                 egui::RichText::new(
-                                    "Entrées : CSV, Excel/ODS, DOCX, JSON, TXT, MD • PDF refusé explicitement",
+                                    "Entrées : classeurs Excel (.xlsx, .xls, .xlsb) • sortie : .xlsx",
                                 )
                                 .small()
                                 .color(egui::Color32::from_gray(115)),
@@ -756,7 +753,7 @@ fn is_supported_file(path: &Path) -> bool {
 fn has_output_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("md") || value.eq_ignore_ascii_case("txt"))
+        .is_some_and(|value| value.eq_ignore_ascii_case("xlsx"))
 }
 
 fn same_path(first: &Path, second: &Path) -> bool {
@@ -791,7 +788,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Consolid")
             .with_inner_size([960.0, 860.0])
-            .with_min_inner_size([700.0, 620.0]),
+            .with_resizable(false)
+            .with_maximize_button(false),
         ..Default::default()
     };
     eframe::run_native(
