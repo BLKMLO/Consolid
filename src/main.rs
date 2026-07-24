@@ -54,7 +54,8 @@ impl Default for ConsolidApp {
             api_key: String::new(),
             model: "mistral-small-latest".into(),
             show_api_key: false,
-            status: "Ajoutez les classeurs Excel sources, puis la consolidation à contrôler.".into(),
+            status: "Ajoutez les classeurs Excel sources, puis la consolidation à contrôler."
+                .into(),
             status_kind: StatusKind::Info,
             running: false,
             receiver: None,
