@@ -396,7 +396,12 @@ impl ConsolidApp {
 
     fn render_sources(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
-            section_title(ui, "1", "Pièces sources", "Classeurs Excel servant de référence");
+            section_title(
+                ui,
+                "1",
+                "Pièces sources",
+                "Classeurs Excel servant de référence",
+            );
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(!self.running, egui::Button::new("＋ Ajouter des fichiers"))
