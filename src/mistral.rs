@@ -284,7 +284,7 @@ fn sanitize_message(value: &str, maximum: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read as _, Write as _};
+    use std::io::Write as _;
 
     #[test]
     fn model_validation_blocks_injected_values() {
