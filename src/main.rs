@@ -8,10 +8,10 @@ mod workflow;
 use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use workflow::MAX_SOURCE_FILES;
 use zeroize::Zeroize;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["xlsx", "xls", "xlsb"];
-const MAX_SOURCE_FILES: usize = 100;
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(46, 144, 250);
 const SUCCESS: egui::Color32 = egui::Color32::from_rgb(53, 190, 128);
 const ERROR: egui::Color32 = egui::Color32::from_rgb(244, 91, 105);
@@ -36,7 +36,7 @@ struct ConsolidApp {
     consolidation: Option<PathBuf>,
     output: Option<PathBuf>,
     api_key: String,
-    model: String,
+    agent_id: String,
     show_api_key: bool,
     status: String,
     status_kind: StatusKind,
@@ -52,7 +52,7 @@ impl Default for ConsolidApp {
             consolidation: None,
             output: None,
             api_key: String::new(),
-            model: "mistral-small-latest".into(),
+            agent_id: String::new(),
             show_api_key: false,
             status: "Ajoutez les classeurs Excel sources, puis la consolidation à contrôler."
                 .into(),
@@ -192,7 +192,7 @@ impl ConsolidApp {
             consolidation,
             output,
             api_key: self.api_key.clone(),
-            model: self.model.clone(),
+            agent_id: self.agent_id.clone(),
         };
         let cancellation = workflow::CancellationToken::default();
         let worker_cancellation = cancellation.clone();
@@ -236,7 +236,7 @@ impl ConsolidApp {
         self.api_key.zeroize();
         self.api_key.clear();
         self.show_api_key = false;
-        self.model = "mistral-small-latest".into();
+        self.agent_id.clear();
         self.set_status(
             "Sélection et secret effacés de l’interface.",
             StatusKind::Info,
@@ -336,7 +336,7 @@ impl ConsolidApp {
         {
             return Some("La sortie ne peut remplacer aucun fichier d’entrée.".into());
         }
-        if let Err(error) = mistral::validate_parameters(&self.api_key, self.model.trim()) {
+        if let Err(error) = mistral::validate_parameters(&self.api_key, self.agent_id.trim()) {
             return Some(error.to_string());
         }
         None
@@ -507,8 +507,8 @@ impl ConsolidApp {
             section_title(
                 ui,
                 "3",
-                "Connexion Mistral",
-                "Secret conservé en mémoire, endpoint fixe en HTTPS",
+                "Agent Mistral Studio",
+                "Secret conservé en mémoire, endpoint fixe en HTTPS, conversation non conservée",
             );
             egui::Grid::new("mistral-fields")
                 .num_columns(2)
@@ -550,15 +550,24 @@ impl ConsolidApp {
                     });
                     ui.end_row();
 
-                    ui.label("Modèle");
+                    ui.label("Agent");
                     ui.add_enabled(
                         !self.running,
-                        egui::TextEdit::singleline(&mut self.model)
-                            .hint_text("mistral-small-latest")
-                            .desired_width(240.0),
+                        egui::TextEdit::singleline(&mut self.agent_id)
+                            .hint_text("ag_… ou ag:… (identifiant de l’agent)")
+                            .desired_width(360.0),
+                    )
+                    .on_hover_text(
+                        "Identifiant de l’agent personnalisé créé dans Mistral Studio. \
+                         Le modèle et les instructions système proviennent de l’agent.",
                     );
                     ui.end_row();
                 });
+            ui.add_space(6.0);
+            ui.small(
+                "Le modèle, les instructions et les outils sont définis dans l’agent ; \
+                 l’application n’envoie que les données protégées.",
+            );
         });
     }
 
