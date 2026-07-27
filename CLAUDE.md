@@ -67,13 +67,14 @@ cargo test --locked --all-targets --all-features
 cargo build --release --locked
 ```
 
-La CI ne tourne que sur `windows-latest` (+ `audit` sur ubuntu). Sous Linux, la
-compilation d'`eframe` exige les dépendances système X11/Wayland ; le code métier
-(`extract`, `anonymize`, `workflow`, `mistral`) reste testable.
+La CI ne tourne que sur `windows-latest` (+ `audit` sur ubuntu), mais **tout compile
+et passe sous Linux** dans ce conteneur : vérifié le 2026-07-27, `cargo fmt --check`
+OK et `cargo test --locked --all-targets --all-features` → **26 tests, 26 passés**
+(compilation à froid ~2 min).
 
-Tests présents : 4 dans `extract.rs`, 6 dans `anonymize.rs`, 7 dans `workflow.rs`,
+Répartition : 4 dans `extract.rs`, 6 dans `anonymize.rs`, 8 dans `workflow.rs`,
 8 dans `mistral.rs` (dont un serveur HTTP mock sur `127.0.0.1:0` via
-`audit_with_endpoint`, l'injection d'endpoint réservée aux tests).
+`audit_with_endpoint`, l'injection d'endpoint étant réservée aux tests).
 
 ## 6. Points d'attention / dette connue
 
@@ -81,8 +82,12 @@ Tests présents : 4 dans `extract.rs`, 6 dans `anonymize.rs`, 7 dans `workflow.r
 - `MAX_SOURCE_FILES = 100` est dupliqué dans `main.rs:14` et `workflow.rs:20`.
 - `worksheet_xml` (`workflow.rs:464`) indexe `row.cells[0]` quand aucune en-tête n'a
   été détectée : une réponse ne contenant que des marqueurs `ROW_n` sans paire
-  `clé: valeur` produit des lignes vides et un accès hors bornes. Le panic est
-  rattrapé par `catch_unwind` dans `main.rs`, mais le cas mérite un correctif.
+  `clé: valeur` produit des lignes vides et un accès hors bornes. **Bug confirmé**
+  le 2026-07-27 par un test jetable : `build_xlsx("ROW_1\nROW_2\n")` panique
+  (`index out of bounds`). Le panic est rattrapé par le `catch_unwind` de
+  `main.rs:206` — l'UI affiche « Erreur interne inattendue » — mais le cas mérite
+  un correctif (ignorer les lignes sans cellule, ou garder la branche
+  « ligne brute » sûre).
 - `build_xlsx` nomme les feuilles « Feuille n » ; les noms d'origine des onglets ne
   sont pas conservés (`extract` ne transmet que `SHEET_n`).
 - Le style « carte » de l'UI est défini localement (`card`, `section_title`) ; fenêtre
@@ -101,3 +106,4 @@ Tests présents : 4 dans `extract.rs`, 6 dans `anonymize.rs`, 7 dans `workflow.r
 | Date | Modification | Notes |
 |---|---|---|
 | 2026-07-27 | Création de `CLAUDE.md` (imprégnation initiale, aucun changement de code) | Aucune modification fonctionnelle |
+| 2026-07-27 | Validation locale : `fmt --check` OK, 26/26 tests OK ; confirmation du panic de `build_xlsx` sur lignes sans cellule | Test de confirmation supprimé, arbre laissé propre |
